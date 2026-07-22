@@ -318,6 +318,22 @@ func (o *Options) SetDefaults() {
 		o.ScipCTagsPath = checkScipCTags()
 	}
 
+	// When a scip-ctags binary is available and the caller hasn't supplied an
+	// explicit routing, default TypeScript and TSX to scip-ctags. Its
+	// tree-sitter grammars extract far more symbols from .ts/.tsx than
+	// universal-ctags (which on Windows runs in batch mode and misses most
+	// exported declarations). JavaScript is deliberately left on universal-ctags:
+	// go-enry classifies .js/.jsx/.mjs/.cjs all as "JavaScript", but scip-ctags
+	// only recognizes the .js extension (not .jsx/.mjs/.cjs), so routing the
+	// whole language would silently drop symbols for those files. Keys are the
+	// normalized (lowercased) go-enry language names; see index.normalizeLanguage.
+	if o.ScipCTagsPath != "" && len(o.LanguageMap) == 0 {
+		o.LanguageMap = ctags.LanguageMap{
+			"typescript": ctags.ScipCTags,
+			"tsx":        ctags.ScipCTags,
+		}
+	}
+
 	if o.Parallelism == 0 {
 		o.Parallelism = 4
 	}

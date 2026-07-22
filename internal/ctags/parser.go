@@ -85,9 +85,16 @@ func (lp *CTagsParser) newParserProcess(typ CTagsParserType) (goctags.Parser, er
 	}
 
 	// Windows: go-ctags' persistent interactive pipe deadlocks (see batch.go).
-	// Drive universal-ctags in batch mode instead - correctness-equivalent.
-	if typ == UniversalCTags && runtime.GOOS == "windows" {
-		return newBatchParser(bin), nil
+	// Drive ctags in one-shot batch mode instead - correctness-equivalent.
+	// universal-ctags uses batch.go; scip-ctags speaks the interactive protocol
+	// per-file spawn (scip_batch.go).
+	if runtime.GOOS == "windows" {
+		switch typ {
+		case UniversalCTags:
+			return newBatchParser(bin), nil
+		case ScipCTags:
+			return newScipBatchParser(bin), nil
+		}
 	}
 
 	opts := goctags.Options{Bin: bin}
