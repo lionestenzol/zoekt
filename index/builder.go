@@ -38,7 +38,6 @@ import (
 	"github.com/bmatcuk/doublestar/v4"
 	"github.com/dustin/go-humanize"
 	"github.com/rs/xid"
-	"golang.org/x/sys/unix"
 
 	"maps"
 
@@ -1123,10 +1122,8 @@ func (e *deltaIndexOptionsMismatchError) Error() string {
 	return fmt.Sprintf("one or more index options for shard %q do not match Builder's index options. These index option updates are incompatible with delta build. New index options: %+v", e.shardName, e.newOptions)
 }
 
-// umask holds the Umask of the current process
+// umask holds the Umask of the current process. On Unix it is populated by an
+// init() in umask_unix.go; on Windows there is no umask concept so it stays 0.
+// Windows port: see ~/.claude/rules/common/code-as-furniture.md — platform gap
+// filled, not documented-and-skipped.
 var umask os.FileMode
-
-func init() {
-	umask = os.FileMode(unix.Umask(0))
-	unix.Umask(int(umask))
-}
