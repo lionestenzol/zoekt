@@ -41,6 +41,14 @@ INDEX_BIN = os.environ.get("ZOEKT_INDEX_BIN",
 INDEX_DIR = os.environ.get("ZOEKT_INDEX_DIR", r"C:\Users\bruke\zoekt-win\index")
 # Real universal-ctags binary (Windows names it ctags.exe, not universal-ctags).
 CTAGS_COMMAND = os.environ.get("CTAGS_COMMAND", r"C:\mingw64\bin\ctags.exe")
+# scip-ctags binary (Sourcegraph's tree-sitter tagger, built native-Windows from
+# sourcegraph-public-snapshot). TypeScript + TSX are routed to it by default
+# (index/builder.go SetDefaults) because its tree-sitter grammars tag far more
+# .ts/.tsx symbols than universal-ctags batch mode (15/15 vs 3/15 exported funcs
+# on delta-kernel/cockpit.ts). On Windows it runs one-shot per file via the
+# interactive protocol (src/internal/ctags/scip_batch.go), mirroring batch.go.
+# Set SCIP_CTAGS_COMMAND="" to disable scip routing (falls back to universal).
+SCIP_CTAGS_COMMAND = os.environ.get("SCIP_CTAGS_COMMAND", r"C:\Users\bruke\zoekt-win\scip-ctags.exe")
 # Symbols ON by default - Windows uses batch-mode ctags (src/internal/ctags/batch.go),
 # which sidesteps the go-ctags interactive-pipe deadlock. Set ZOEKT_CTAGS=0 to skip.
 CTAGS_ON = os.environ.get("ZOEKT_CTAGS", "1") != "0"
@@ -106,11 +114,19 @@ def main() -> int:
 
     env = dict(os.environ)
     env["CTAGS_COMMAND"] = CTAGS_COMMAND
+    if SCIP_CTAGS_COMMAND and Path(SCIP_CTAGS_COMMAND).is_file():
+        env["SCIP_CTAGS_COMMAND"] = SCIP_CTAGS_COMMAND
+    else:
+        # Don't pass a missing path - builder.SetDefaults would still enable scip
+        # routing but find no binary. Leaving it unset keeps TS/TSX on universal.
+        env.pop("SCIP_CTAGS_COMMAND", None)
     cmd_base = [INDEX_BIN, "-index", INDEX_DIR,
                 "-ignore_dirs", IGNORE_DIRS, "-file_limit", FILE_LIMIT]
     if not CTAGS_ON:
         cmd_base.append("-disable_ctags")
+    scip_on = CTAGS_ON and env.get("SCIP_CTAGS_COMMAND")
     print(f"ctags: {'ON (symbols)' if CTAGS_ON else 'off (content-only)'}"
+          f"{'  + scip-ctags for ts/tsx' if scip_on else ''}"
           f"  |  {len(repos)} repo(s)")
 
     ok, fail = 0, 0
