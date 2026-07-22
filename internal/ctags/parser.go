@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"runtime"
 	"time"
 
 	goctags "github.com/sourcegraph/go-ctags"
@@ -81,6 +82,12 @@ func (lp *CTagsParser) newParserProcess(typ CTagsParserType) (goctags.Parser, er
 	if bin == "" {
 		// This happens if CTagsMustSucceed is false and we didn't find the binary
 		return nil, nil
+	}
+
+	// Windows: go-ctags' persistent interactive pipe deadlocks (see batch.go).
+	// Drive universal-ctags in batch mode instead - correctness-equivalent.
+	if typ == UniversalCTags && runtime.GOOS == "windows" {
+		return newBatchParser(bin), nil
 	}
 
 	opts := goctags.Options{Bin: bin}
