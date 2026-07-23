@@ -34,6 +34,7 @@ See project_zoekt_windows_native memory.
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 INDEX_BIN = os.environ.get("ZOEKT_INDEX_BIN",
@@ -102,11 +103,43 @@ def clean_stale_tmp() -> None:
             print(f"  WARN could not remove {tmp.name}: {e}")
 
 
+# Staleness triage (shared gate for the 3-layer failsafe: scheduled task + daemon
+# cron + boot-time check). Any layer may call `reindex.py --if-stale`; the reindex
+# runs only if the newest shard is older than STALE_HOURS. This keeps the layers
+# complementary (each catches a different miss) instead of redundant - the lesson
+# from the atlas-consolidation autostart audit, where two layers ran the same
+# pipeline unconditionally. See project_zoekt_windows_native memory.
+STALE_HOURS = float(os.environ.get("ZOEKT_STALE_HOURS", "24"))
+
+
+def newest_shard_age_hours() -> float | None:
+    """Age (hours) of the most recently written *.zoekt shard, or None if none."""
+    shards = list(Path(INDEX_DIR).glob("*.zoekt"))
+    if not shards:
+        return None
+    newest = max(s.stat().st_mtime for s in shards)
+    return (time.time() - newest) / 3600.0
+
+
+def index_is_fresh() -> bool:
+    age = newest_shard_age_hours()
+    return age is not None and age < STALE_HOURS
+
+
 def main() -> int:
+    if_stale = "--if-stale" in sys.argv
+    args = [a for a in sys.argv[1:] if a != "--if-stale"]
+
     Path(INDEX_DIR).mkdir(parents=True, exist_ok=True)
+
+    if if_stale and index_is_fresh():
+        age = newest_shard_age_hours()
+        print(f"index fresh ({age:.1f}h < {STALE_HOURS}h) - skipping reindex")
+        return 0
+
     clean_stale_tmp()
 
-    only = sys.argv[1] if len(sys.argv) > 1 else None
+    only = args[0] if args else None
     repos = [r for r in REPOS if (only is None or only.lower() in r.lower())]
     if only and not repos:
         print(f"No repo in REPOS matches {only!r}. Known: {REPOS}")
