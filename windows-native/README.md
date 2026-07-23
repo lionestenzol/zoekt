@@ -49,6 +49,52 @@ the real binary (e.g. `C:\mingw64\bin\ctags.exe`). `reindex.py` sets this for yo
 universal-ctags must be built with `+interactive` (ours is; batch mode uses it via
 `--output-format=json`).
 
+## scip-ctags — tree-sitter symbols for TS/TSX
+
+universal-ctags is regex-based and tags TypeScript poorly: on a real
+`delta-kernel/cockpit.ts` it caught only **3 of 15** exported functions (it skips
+multi-line signatures — see Caveat). Sourcegraph's **scip-ctags** is tree-sitter
+based and gets **15/15**. This branch routes `.ts`/`.tsx` to scip-ctags on Windows
+(`internal/ctags/scip_batch.go` + `parser.go`, commit `9fd7b5c`); everything else
+stays on universal-ctags.
+
+scip-ctags speaks the same interactive protocol as universal-ctags, which
+deadlocks over a persistent pipe on Windows — so, exactly like `batch.go`, we
+spawn it **once per file** (write one `generate-tags` request + content on stdin,
+close stdin, drain the JSON tag replies). This is safe because scip-ctags flushes
+stdout after every request.
+
+### Building `scip-ctags.exe`
+
+It is not vendored here (34 MB binary). Build it from Sourcegraph's monorepo — a
+sparse+shallow checkout of just the one crate keeps the clone at ~10 MB:
+
+```sh
+git clone --filter=blob:none --sparse --depth 1 \
+  https://github.com/sourcegraph/sourcegraph-public-snapshot C:/Users/bruke/scip-ctags-src
+cd C:/Users/bruke/scip-ctags-src
+git sparse-checkout set docker-images/syntax-highlighter
+cd docker-images/syntax-highlighter
+# rust-toolchain.toml pins Rust 1.78.0; rustup installs it automatically.
+# Needs MSVC build tools (tree-sitter C grammars link against them).
+cargo build --release --bin scip-ctags
+cp target/release/scip-ctags.exe C:/Users/bruke/zoekt-win/scip-ctags.exe
+```
+
+A release build needs ~3-4 GB of free disk for `target/`. Note the bin lives in
+the **root** package (`--bin scip-ctags`); `scip-syntax` is a separate workspace
+crate (`-p scip-syntax`) and is not needed here.
+
+### Wiring it in
+
+zoekt honors a `SCIP_CTAGS_COMMAND` env override (mirrors `CTAGS_COMMAND`).
+`reindex.py` sets it to `C:\Users\bruke\zoekt-win\scip-ctags.exe` when that file
+exists; if it's missing, TS/TSX silently fall back to universal-ctags. Routing is
+by go-enry **language** name, not extension: only `TypeScript` and `TSX` go to
+scip. JavaScript is deliberately left on universal-ctags — go-enry lumps
+`.js/.jsx/.mjs/.cjs` all as `JavaScript`, but scip-ctags only recognizes the `.js`
+extension, so routing the whole language would drop symbols for the rest.
+
 ## Tooling in this folder
 
 - **`reindex.py`** — repeatable index builder. Source-vs-junk ignore set (derived
@@ -63,7 +109,9 @@ universal-ctags must be built with `+interactive` (ours is; batch mode uses it v
 
 ## Caveat
 
-`sym:` inherits universal-ctags' limitation: it skips definitions whose signature
-**wraps across multiple lines** (`export async function foo(` + params on the next
-lines → 0 tags). An empty `sym:` is not proof the symbol is undefined — fall back
-to a plain/regex identifier search.
+For languages still on universal-ctags, `sym:` inherits its limitation: it skips
+definitions whose signature **wraps across multiple lines** (`export async
+function foo(` + params on the next lines → 0 tags). `.ts`/`.tsx` no longer suffer
+this — scip-ctags (tree-sitter) handles multi-line signatures. For everything
+else, an empty `sym:` is not proof the symbol is undefined — fall back to a
+plain/regex identifier search.
